@@ -1,6 +1,6 @@
 "use client";
 import React, { useMemo } from "react";
-import { ArtistContactSchemaConfig } from "@/components/pages/manager/config/ArtistContactSchemaConfig";
+import { ArtistContactSchemaConfig } from "@/components/pages/manager/config/artistContactSchemaConfig";
 
 import ManagerStructureLayout from "@/components/pages/manager/layouts/ManagerStructureLayout";
 
