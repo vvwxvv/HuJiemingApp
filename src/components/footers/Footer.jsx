@@ -11,7 +11,7 @@ import useSiteMeta from "@/hooks/useSiteMeta";
 import { DEFAULT_MENUS } from "@/utils/siteMetaDefaults";
 import { getBrandName } from "@/utils/artistUtils";
 import useArtistContactData from "@/components/pages/about/hooks/useArtistContactData";
-import { isRiddenPlatform } from "@/components/lists/ContactInfo";
+import { isHiddenPlatform } from "@/components/lists/ContactInfo";
 import ThemeToggleButton from "@/components/buttons/ThemeToggleButton";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,7 +21,7 @@ import ThemeToggleButton from "@/components/buttons/ThemeToggleButton";
 //  hardcoded further down.
 // ─────────────────────────────────────────────────────────────────────────────
 const FOOTER_CONFIG = Object.freeze({
-  MAX_WIDTR: 1200,
+  MAX_WIDTH: 1200,
   PADDING_DESKTOP: "56px 50px 26px",
   PADDING_MOBILE: "36px 20px 22px",
   COLUMN_GAP: "clamp(24px, 4vw, 64px)",
@@ -50,23 +50,11 @@ const FOOTER_CONFIG = Object.freeze({
   REVEAL_MARGIN: "-60px",
 });
 
-// Archive button — mirrors MainNav's ACTIONS.ARCHIVE (solid square, inverts).
-const ARCHIVE = Object.freeze({
-  LABEL_EN: "Archive",
-  LABEL_CN: "档案",
-  HREF: "/artworks/archive",
-  PADDING: "9px 20px",
-  FONT_SIZE: "15px",
-  FONT_WEIGHT: 500,
-  HOVER_OPACITY: 0.78,
-});
-
 export default function Footer() {
   const { isCn } = useContext(LanguageContext);
   const { isMobile } = useContext(DeviceContext);
   const { colors, isDark } = useReverseTheme();
   const { contentFontFamily } = useFont();
-  const { fontFamily: titleFont } = useFont("artistName");
 
   // Meta doc (app title, footer copy, menu) — defaults live in siteMetaDefaults.
   const { meta } = useSiteMeta();
@@ -159,28 +147,16 @@ export default function Footer() {
             justifyContent: "space-between",
           }}
         >
-          {/* Left — app title + address */}
-          <div style={{ flex: "1 1 220px", minWidth: 180 }}>
-            <div
-              style={{
-                fontFamily: titleFont,
-                fontSize: isMobile ? FOOTER_CONFIG.TITLE_SIZE_MOBILE : FOOTER_CONFIG.TITLE_SIZE_DESKTOP,
-                fontWeight: FOOTER_CONFIG.TITLE_WEIGHT,
-                letterSpacing: FOOTER_CONFIG.TITLE_LETTER_SPACING,
-                lineHeight: 1.1,
-              }}
-            >
-              {appTitle}
-            </div>
-
-            {addressLines.length > 0 && (
-              <div style={{ ...metaStyle, marginTop: FOOTER_CONFIG.BLOCK_GAP + 4 }}>
+          {/* Left — address only (app title intentionally not shown) */}
+          {addressLines.length > 0 && (
+            <div style={{ flex: "1 1 220px", minWidth: 180 }}>
+              <div style={metaStyle}>
                 {addressLines.map((line, i) => (
                   <div key={i}>{line}</div>
                 ))}
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
           {/* Column — site menu */}
           <nav style={{ flex: "0 1 auto" }}>
@@ -232,10 +208,6 @@ export default function Footer() {
             })}
           </div>
 
-          {/* Right — archive button */}
-          <div style={{ flex: "0 0 auto" }}>
-            <ArchiveLink fontFamily={contentFontFamily} colors={colors} isCn={isCn} />
-          </div>
         </div>
 
         {/* Bottom — copyright + light/dark switch */}
@@ -263,35 +235,5 @@ export default function Footer() {
         </div>
       </div>
     </motion.footer>
-  );
-}
-
-// Solid square button → the public archive (matches the nav's Archive button).
-function ArchiveLink({ fontFamily, colors, isCn }) {
-  const [hover, setHover] = React.useState(false);
-  return (
-    <Link
-      href={ARCHIVE.HREF}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        justifyContent: "center",
-        textDecoration: "none",
-        whiteSpace: "nowrap",
-        fontFamily,
-        fontSize: ARCHIVE.FONT_SIZE,
-        fontWeight: ARCHIVE.FONT_WEIGHT,
-        lineHeight: 1,
-        padding: ARCHIVE.PADDING,
-        background: colors.text,
-        color: colors.background,
-        opacity: hover ? ARCHIVE.HOVER_OPACITY : 1,
-        transition: "opacity 0.2s ease",
-      }}
-    >
-      {isCn ? ARCHIVE.LABEL_CN : ARCHIVE.LABEL_EN}
-    </Link>
   );
 }
