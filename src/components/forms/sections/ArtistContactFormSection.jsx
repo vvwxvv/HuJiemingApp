@@ -5,7 +5,7 @@ import { LanguageContext } from '@/components/contexts/LanguageContext';
 import TabbedFormManager from '@/components/forms/managers/TabbedFormManager';
 import GALLERY_CONTACT_FORM_LABELS, {
   SOCIAL_PLATFORM_OPTIONS,
-} from '@/components/forms/labels/ArtistContactFormLabels';
+} from '@/components/forms/labels/artistContactFormLabels';
 
 // 字段名对齐 schema / API config / defaultValues：artist_name, opening_time, web_url, social_media
 // (此前误用了 Prisma 的 camelCase 命名，导致表单写入的字段与 schema/API 完全脱节)
