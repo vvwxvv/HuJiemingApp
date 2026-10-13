@@ -1,0 +1,605 @@
+"use client";
+
+/**
+ * SiteMetaPageComponent — `/manager/meta`
+ *
+ * One page for EVERYTHING the site itself is configured with: app identity,
+ * footer, website URL, both navigation menus, SEO tags, the gallery entity
+ * mapping and the form type options. Backed by the singleton `Meta` document (`/api/meta`),
+ * so nothing here needs a JSON edit any more.
+ *
+ * Field-level form options live in `@/components/forms/utils/formOptionsUtils`;
+ * every site setting comes from the Meta document (defaults in
+ * `@/utils/siteMetaDefaults`).
+ */
+
+import React, { useContext, useEffect, useMemo, useState } from "react";
+import { Box, Typography, CircularProgress } from "@mui/material";
+import { Check, Disc, Globe, ListTree, Plus, Trash2 } from "lucide-react";
+import { LanguageContext } from "@/components/contexts/LanguageContext";
+import useFont from '@/hooks/useFont';
+import useSiteMeta from "@/hooks/useSiteMeta";
+import { FORM_TYPE_OPTIONS } from "@/utils/siteMetaDefaults";
+
+// ─── style tokens (white surfaces, 1px black hairlines, no fills) ───────────
+const BORDER = "1px solid var(--border-light, #000)";
+const HAIRLINE = "1px solid var(--border-light, rgba(0,0,0,.10))";
+
+// ─── Entities that own a form "type" list ─────────────────────────────────
+// Mirrors the models in `prisma/schema.prisma` that carry a `type` field, in
+// schema order. There is no `Fair` model — shows / fairs are Events — so there
+// is deliberately no Fair group here.
+const TYPE_ENTITIES = [
+  { key: "artwork", en: "Artwork", cn: "作品" },
+  { key: "video", en: "Video", cn: "视频" },
+  { key: "series", en: "Series", cn: "系列" },
+  { key: "resume", en: "Resume", cn: "简历" },
+  { key: "web", en: "Web", cn: "网址" },
+  { key: "writing", en: "Writing", cn: "写作" },
+  { key: "event", en: "Event", cn: "活动" },
+  { key: "bibliography", en: "Bibliography", cn: "文献" },
+  { key: "image", en: "Image", cn: "图片" },
+  { key: "exhibition", en: "Exhibition", cn: "展览" },
+];
+
+// Option groups that must never live in the Meta doc (no Prisma model behind
+// them) — dropped again on every save so old docs self-clean.
+const DROPPED_FORM_TYPE_KEYS = ["fair"];
+
+const inputSx = (fontStyle) => ({
+  width: "100%",
+  boxSizing: "border-box",
+  border: BORDER,
+  borderRadius: "8px",
+  backgroundColor: "var(--background-primary, #fff)",
+  color: "var(--text-primary, #000)",
+  padding: "8px 10px",
+  fontSize: 13,
+  outline: "none",
+  fontFamily: "inherit",
+  ...fontStyle,
+});
+
+/**
+ * A form-type option is stored as its two labels only — the label IS the value.
+ * A separate `value` field only repeats the label and drifts out of sync, so it
+ * is dropped. Legacy rows that still carry one keep it as a fallback EN label.
+ */
+const toCleanOption = (opt = {}) => ({
+  label_en: String(opt.label_en ?? opt.value ?? "").trim(),
+  label_cn: String(opt.label_cn ?? opt.label_en ?? opt.value ?? "").trim(),
+});
+
+/** EN label of one option (tolerant of legacy `{ value, … }` rows). */
+const optionLabelEn = (opt = {}) => String(opt.label_en ?? opt.value ?? "");
+
+/** CN label of one option (tolerant of legacy `{ value, … }` rows). */
+const optionLabelCn = (opt = {}) => String(opt.label_cn ?? "");
+
+const TextField = ({ label, value, onChange, hint, fontStyle, placeholder }) => (
+  <Box sx={{ display: "flex", flexDirection: "column", gap: "5px", minWidth: 0 }}>
+    {label ? (
+      <Typography sx={{ fontSize: 11, fontWeight: 600, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--text-primary, rgba(0,0,0,.55))" }}>
+        {label}
+      </Typography>
+    ) : null}
+    <input
+      value={value ?? ""}
+      placeholder={placeholder || ""}
+      onChange={(e) => onChange(e.target.value)}
+      style={inputSx(fontStyle)}
+    />
+    {hint ? <Typography sx={{ fontSize: 10, color: "var(--text-primary, rgba(0,0,0,.45))" }}>{hint}</Typography> : null}
+  </Box>
+);
+
+const TextAreaField = ({ label, value, onChange, rows = 3, fontStyle }) => (
+  <Box sx={{ display: "flex", flexDirection: "column", gap: "5px", minWidth: 0 }}>
+    {label ? (
+      <Typography sx={{ fontSize: 11, fontWeight: 600, letterSpacing: ".06em", textTransform: "uppercase", color: "var(--text-primary, rgba(0,0,0,.55))" }}>
+        {label}
+      </Typography>
+    ) : null}
+    <textarea
+      rows={rows}
+      value={value ?? ""}
+      onChange={(e) => onChange(e.target.value)}
+      style={{ ...inputSx(fontStyle), resize: "vertical", lineHeight: 1.5 }}
+    />
+  </Box>
+);
+
+const IconButton = ({ title, onClick, children, danger }) => (
+  <Box
+    component="button"
+    type="button"
+    title={title}
+    onClick={onClick}
+    sx={{
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      width: 30,
+      height: 30,
+      border: HAIRLINE,
+      borderRadius: "8px",
+      backgroundColor: "var(--background-primary, #fff)",
+      color: danger ? "#b00020" : "var(--text-primary, #000)",
+      cursor: "pointer",
+      flexShrink: 0,
+      "&:hover": { borderColor: "var(--border-light, #000)", textDecoration: "underline", textUnderlineOffset: "3px" },
+    }}
+  >
+    {children}
+  </Box>
+);
+
+const Section = ({ icon: Icon, title, subtitle, children, right }) => (
+  <Box sx={{ border: HAIRLINE, borderRadius: "12px", backgroundColor: "var(--background-primary, #fff)", mb: 2.5, overflow: "hidden" }}>
+    <Box
+      sx={{
+        display: "flex",
+        alignItems: "center",
+        gap: 1.25,
+        px: 2,
+        py: 1.25,
+        borderBottom: HAIRLINE,
+        flexWrap: "wrap",
+        rowGap: 1,
+      }}
+    >
+      {Icon ? <Icon size={15} strokeWidth={1.6} /> : null}
+      <Typography sx={{ fontSize: 13, fontWeight: 700, letterSpacing: ".02em" }}>{title}</Typography>
+      {subtitle ? <Typography sx={{ fontSize: 11, color: "var(--text-primary, rgba(0,0,0,.5))" }}>{subtitle}</Typography> : null}
+      <Box sx={{ flex: 1 }} />
+      {right}
+    </Box>
+    <Box sx={{ p: 2, display: "flex", flexDirection: "column", gap: 1.75 }}>{children}</Box>
+  </Box>
+);
+
+/** label + href row editor (one level of dropdown children). */
+const MenuItemRows = ({ items = [], onChange, t, nested = false }) => {
+  const update = (index, patch) => {
+    const next = items.map((item, i) => (i === index ? { ...item, ...patch } : item));
+    onChange(next);
+  };
+  const remove = (index) => onChange(items.filter((_, i) => i !== index));
+  const add = () => onChange([...items, { label: "", href: "" }]);
+  const addChild = (index) => {
+    const next = items.map((item, i) =>
+      i === index ? { ...item, dropdown: [...(item.dropdown || []), { label: "", href: "" }] } : item
+    );
+    onChange(next);
+  };
+
+  return (
+    <Box sx={{ display: "flex", flexDirection: "column", gap: 1 }}>
+      {items.map((item, index) => (
+        <Box key={index} sx={{ border: HAIRLINE, borderRadius: "10px", p: 1.25, backgroundColor: "var(--background-primary, #fff)" }}>
+          <Box sx={{ display: "flex", gap: 1, alignItems: "flex-end", flexWrap: "wrap" }}>
+            <Box sx={{ flex: "1 1 180px", minWidth: 140 }}>
+              <TextField label={t.label} value={item.label} onChange={(v) => update(index, { label: v })} />
+            </Box>
+            <Box sx={{ flex: "1 1 220px", minWidth: 160 }}>
+              <TextField label={t.href} value={item.href} onChange={(v) => update(index, { href: v })} />
+            </Box>
+            <IconButton title={t.addChild} onClick={() => addChild(index)}>
+              <ListTree size={14} strokeWidth={1.6} />
+            </IconButton>
+            <IconButton title={t.remove} onClick={() => remove(index)} danger>
+              <Trash2 size={14} strokeWidth={1.6} />
+            </IconButton>
+          </Box>
+
+          {item.dropdown?.length ? (
+            <Box sx={{ mt: 1.25, pl: 1.5, borderLeft: "1px dashed var(--border-light, rgba(0,0,0,.3))", display: "flex", flexDirection: "column", gap: 1 }}>
+              {item.dropdown.map((child, ci) => (
+                <Box key={ci} sx={{ display: "flex", gap: 1, alignItems: "flex-end", flexWrap: "wrap" }}>
+                  <Box sx={{ flex: "1 1 180px", minWidth: 140 }}>
+                    <TextField
+                      label={t.childLabel}
+                      value={child.label}
+                      onChange={(v) => {
+                        const dropdown = item.dropdown.map((c, i) => (i === ci ? { ...c, label: v } : c));
+                        update(index, { dropdown });
+                      }}
+                    />
+                  </Box>
+                  <Box sx={{ flex: "1 1 220px", minWidth: 160 }}>
+                    <TextField
+                      label={t.href}
+                      value={child.href}
+                      onChange={(v) => {
+                        const dropdown = item.dropdown.map((c, i) => (i === ci ? { ...c, href: v } : c));
+                        update(index, { dropdown });
+                      }}
+                    />
+                  </Box>
+                  <IconButton
+                    title={t.remove}
+                    danger
+                    onClick={() => update(index, { dropdown: item.dropdown.filter((_, i) => i !== ci) })}
+                  >
+                    <Trash2 size={14} strokeWidth={1.6} />
+                  </IconButton>
+                </Box>
+              ))}
+            </Box>
+          ) : null}
+        </Box>
+      ))}
+      <Box
+        component="button"
+        type="button"
+        onClick={add}
+        sx={{
+          alignSelf: "flex-start",
+          display: "inline-flex",
+          alignItems: "center",
+          gap: "6px",
+          border: BORDER,
+          borderRadius: "8px",
+          backgroundColor: "var(--background-primary, #fff)",
+          px: 1.5,
+          py: 0.75,
+          fontSize: 12,
+          fontWeight: 600,
+          cursor: "pointer",
+          "&:hover": { textDecoration: "underline", textUnderlineOffset: "3px" },
+        }}
+      >
+        <Plus size={14} strokeWidth={1.8} /> {nested ? t.addChild : t.addItem}
+      </Box>
+    </Box>
+  );
+};
+
+export default function SiteMetaPageComponent() {
+  const { isCn } = useContext(LanguageContext);
+  const { style: labelFontStyle } = useFont();
+  const { meta, loading, save, saving } = useSiteMeta();
+
+  const [draft, setDraft] = useState(meta);
+  const [menuTab, setMenuTab] = useState("managerMenu");
+  const [menuLang, setMenuLang] = useState(isCn ? "cn" : "en");
+  const [status, setStatus] = useState(null);
+
+  // Seed the draft once the doc arrives (and when the doc itself changes).
+  useEffect(() => {
+    setDraft(meta);
+  }, [meta]);
+  useEffect(() => {
+    setMenuLang(isCn ? "cn" : "en");
+  }, [isCn]);
+
+  const t = useMemo(
+    () =>
+      isCn
+        ? {
+            title: "站点信息",
+            subtitle: "站点标题、页脚、导航菜单与 SEO — 全部在此维护（表单设置仍在 JSON）",
+            save: "保存更改",
+            saved: "已保存",
+            saving: "保存中…",
+            failed: "保存失败",
+            footer: "页脚",
+            footerHint: "公司名称、起始年份、版权文字",
+            menus: "导航菜单",
+            menusHint: "公开菜单与后台菜单（含下拉子项）",
+            seo: "SEO 与标签",
+            label: "名称",
+            childLabel: "子项名称",
+            href: "链接",
+            addItem: "添加一项",
+            addChild: "添加子项",
+            remove: "删除",
+            mainMenu: "公开菜单",
+            managerMenu: "后台菜单",
+            en: "英文",
+            cn: "中文",
+            companyEn: "公司名称（英文）",
+            companyCn: "公司名称（中文）",
+            startYear: "起始年份",
+            rightsEn: "版权文字（英文）",
+            rightsCn: "版权文字（中文）",
+            seoTitle: "SEO 标题",
+            seoDesc: "SEO 描述",
+            keywords: "关键词",
+            ogImage: "分享图 (og:image)",
+            icon: "站点图标",
+            canonical: "规范链接 (canonical)",
+            author: "作者",
+            jsonNote: "图库实体映射（galleryEntities）保持只读，如需修改请告知。",
+            formTypes: "表单类型选项",
+            formTypesHint: "每个实体（对应 prisma 模型）的 type 下拉选项：只填名称，名称本身就是值（可增删）",
+            value: "值",
+            labelEn: "名称（英文）",
+            labelCn: "名称（中文）",
+            addType: "添加类型",
+          }
+        : {
+            title: "Site Meta",
+            subtitle: "Title, footer, website, navigation menus and SEO — all maintained here (form settings stay in JSON)",
+            save: "Save changes",
+            saved: "Saved",
+            saving: "Saving…",
+            failed: "Save failed",
+            footer: "Footer",
+            footerHint: "Company name, start year, rights text",
+            menus: "Navigation menus",
+            menusHint: "Public + manager menus (with dropdown children)",
+            seo: "SEO & tags",
+            label: "Label",
+            childLabel: "Child label",
+            href: "Href",
+            addItem: "Add item",
+            addChild: "Add child",
+            remove: "Remove",
+            mainMenu: "Public menu",
+            managerMenu: "Manager menu",
+            en: "English",
+            cn: "Chinese",
+            companyEn: "Company name (EN)",
+            companyCn: "Company name (CN)",
+            startYear: "Start year",
+            rightsEn: "Rights text (EN)",
+            rightsCn: "Rights text (CN)",
+            seoTitle: "SEO title",
+            seoDesc: "SEO description",
+            keywords: "Keywords",
+            ogImage: "Share image (og:image)",
+            icon: "Site icon",
+            canonical: "Canonical URL",
+            author: "Author",
+            jsonNote: "The image-gallery entity mapping (galleryEntities) stays read-only — tell me if you want it editable.",
+            formTypes: "Form type options",
+            formTypesHint: "Type dropdown options per entity (one per Prisma model) — just the name: the name itself is the value (add or remove)",
+            value: "Value",
+            labelEn: "Name (EN)",
+            labelCn: "Name (CN)",
+            addType: "Add type",
+          },
+    [isCn]
+  );
+
+  const set = (key) => (value) => setDraft((d) => ({ ...d, [key]: value }));
+  const setIn = (key, sub) => (value) => setDraft((d) => ({ ...d, [key]: { ...(d[key] || {}), [sub]: value } }));
+
+  // Form "type" option lists, one per Prisma entity (see TYPE_ENTITIES).
+  // An option is just its label — the label IS the value (no separate value
+  // field to keep in sync: that only creates repeats and confusion).
+  const formTypes = draft?.formTypes || {};
+  const setFormTypeList = (entity, list) =>
+    setDraft((d) => ({
+      ...d,
+      formTypes: { ...(d.formTypes || {}), [entity]: list.map(toCleanOption) },
+    }));
+
+  const handleSave = async () => {
+    setStatus(null);
+    try {
+      // Never persist option groups that have no Prisma model behind them
+      // (e.g. the old `fair` group) — old docs self-clean on save.
+      const formTypesClean = { ...(draft?.formTypes || {}) };
+      DROPPED_FORM_TYPE_KEYS.forEach((key) => delete formTypesClean[key]);
+      await save({ ...draft, formTypes: formTypesClean });
+      setStatus("ok");
+      setTimeout(() => setStatus(null), 2500);
+    } catch (err) {
+      console.log(err);
+      setStatus("error");
+    }
+  };
+
+  const menuList = draft?.menu?.[menuTab]?.[menuLang] || [];
+  const setMenuList = (items) =>
+    setDraft((d) => ({
+      ...d,
+      menu: { ...(d.menu || {}), [menuTab]: { ...(d.menu?.[menuTab] || {}), [menuLang]: items } },
+    }));
+
+  const pill = (active) => ({
+    px: 1.25,
+    py: 0.5,
+    borderRadius: "8px",
+    border: "1px solid",
+    borderColor: active ? "var(--border-light, #000)" : "transparent",
+    backgroundColor: active ? "var(--interactive-background-hover, rgba(0,0,0,.06))" : "transparent",
+    fontSize: 12,
+    fontWeight: active ? 700 : 400,
+    cursor: "pointer",
+    whiteSpace: "nowrap",
+  });
+
+  const row = { display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" }, gap: 1.75 };
+  const row3 = { display: "grid", gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr 1fr" }, gap: 1.75 };
+
+  return (
+    <Box sx={{ width: "100%", maxWidth: 1080, mx: "auto", px: { xs: 2, md: 3 }, pt: 3, pb: 8 }}>
+      {/* ── Header ── */}
+      <Box
+        sx={{
+          display: "flex",
+          alignItems: "center",
+          gap: 1.5,
+          flexWrap: "wrap",
+          rowGap: 1,
+          pb: 1.5,
+          mb: 2.5,
+          borderBottom: "1px solid var(--border-light, rgba(0,0,0,.16))",
+        }}
+      >
+        <Disc size={20} strokeWidth={1.5} />
+        <Box sx={{ display: "flex", flexDirection: "column", minWidth: 0 }}>
+          <Typography sx={{ fontSize: 20, fontWeight: 700, letterSpacing: ".01em" }}>{t.title}</Typography>
+          <Typography sx={{ fontSize: 11.5, color: "var(--text-primary, rgba(0,0,0,.55))" }}>{t.subtitle}</Typography>
+        </Box>
+        <Box sx={{ flex: 1 }} />
+        {status === "ok" ? (
+          <Box sx={{ display: "inline-flex", alignItems: "center", gap: "5px", fontSize: 12, color: "#0a7d28" }}>
+            <Check size={14} strokeWidth={2} /> {t.saved}
+          </Box>
+        ) : null}
+        {status === "error" ? (
+          <Typography sx={{ fontSize: 12, color: "#b00020" }}>{t.failed}</Typography>
+        ) : null}
+        <Box
+          component="button"
+          type="button"
+          onClick={handleSave}
+          disabled={saving}
+          sx={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: "7px",
+            border: BORDER,
+            borderRadius: "8px",
+            backgroundColor: "var(--background-primary, #fff)",
+            color: "var(--text-primary, #000)",
+            px: 2,
+            py: 0.9,
+            fontSize: 12.5,
+            fontWeight: 700,
+            cursor: saving ? "default" : "pointer",
+            opacity: saving ? 0.6 : 1,
+            "&:hover": { textDecoration: saving ? "none" : "underline", textUnderlineOffset: "3px" },
+          }}
+        >
+          {saving ? <CircularProgress size={13} sx={{ color: "var(--text-primary, #000)" }} /> : <Check size={14} strokeWidth={2} />}
+          {saving ? t.saving : t.save}
+        </Box>
+      </Box>
+
+      {/* ── Footer ── */}
+      <Section icon={Globe} title={t.footer} subtitle={t.footerHint}>
+        <Box sx={row}>
+          <TextField label={t.companyEn} value={draft.app_footer_en ?? ""} onChange={set("app_footer_en")} fontStyle={labelFontStyle} />
+          <TextField label={t.companyCn} value={draft.app_footer_cn} onChange={set("app_footer_cn")} fontStyle={labelFontStyle} />
+        </Box>
+        <Box sx={row3}>
+          <TextField
+            label={t.startYear}
+            value={draft.app_footer_start_year ?? ""}
+            onChange={(v) => set("app_footer_start_year")(v === "" ? null : Number(v))}
+            fontStyle={labelFontStyle}
+          />
+          <TextField label={t.rightsEn} value={draft.app_footer_rights_en ?? ""} onChange={set("app_footer_rights_en")} fontStyle={labelFontStyle} />
+          <TextField label={t.rightsCn} value={draft.app_footer_rights_cn} onChange={set("app_footer_rights_cn")} fontStyle={labelFontStyle} />
+        </Box>
+      </Section>
+
+      {/* ── Menus ── */}
+      <Section
+        icon={ListTree}
+        title={t.menus}
+        subtitle={t.menusHint}
+        right={
+          <Box sx={{ display: "inline-flex", alignItems: "center", gap: 1.5 }}>
+            <Box sx={{ display: "inline-flex", gap: 0.75 }}>
+              {[
+                ["mainMenu", t.mainMenu],
+                ["managerMenu", t.managerMenu],
+              ].map(([key, label]) => (
+                <Box key={key} onClick={() => setMenuTab(key)} sx={pill(menuTab === key)}>
+                  {label}
+                </Box>
+              ))}
+            </Box>
+            <Box sx={{ display: "inline-flex", gap: 0.75 }}>
+              {[
+                ["en", t.en],
+                ["cn", t.cn],
+              ].map(([key, label]) => (
+                <Box key={key} onClick={() => setMenuLang(key)} sx={pill(menuLang === key)}>
+                  {label}
+                </Box>
+              ))}
+            </Box>
+          </Box>
+        }
+      >
+        <MenuItemRows items={menuList} onChange={setMenuList} t={t} nested />
+        <Typography sx={{ fontSize: 10.5, color: "var(--text-primary, rgba(0,0,0,.45))" }}>{t.jsonNote}</Typography>
+      </Section>
+
+      {/* ── SEO ── */}
+      <Section icon={Globe} title={t.seo}>
+        <TextField label={t.seoTitle} value={draft.seo?.title} onChange={setIn("seo", "title")} fontStyle={labelFontStyle} />
+        <TextAreaField label={t.seoDesc} value={draft.seo?.description} onChange={setIn("seo", "description")} fontStyle={labelFontStyle} />
+        <Box sx={row}>
+          <TextField label={t.keywords} value={draft.seo?.keywords} onChange={setIn("seo", "keywords")} fontStyle={labelFontStyle} />
+          <TextField label={t.author} value={draft.seo?.author} onChange={setIn("seo", "author")} fontStyle={labelFontStyle} />
+        </Box>
+        <Box sx={row3}>
+          <TextField label={t.ogImage} value={draft.seo?.og_image} onChange={setIn("seo", "og_image")} fontStyle={labelFontStyle} />
+          <TextField label={t.icon} value={draft.seo?.icon} onChange={setIn("seo", "icon")} fontStyle={labelFontStyle} />
+          <TextField label={t.canonical} value={draft.seo?.canonical} onChange={setIn("seo", "canonical")} fontStyle={labelFontStyle} />
+        </Box>
+      </Section>
+
+      {/* ── Form type options ── */}
+      <Section icon={ListTree} title={t.formTypes} subtitle={t.formTypesHint}>
+        {TYPE_ENTITIES.map(({ key: entity, en, cn }) => {
+          const entityLabel = isCn ? cn : en;
+          const stored = Array.isArray(formTypes[entity]) ? formTypes[entity] : [];
+          // Entities the doc has no list for reuse their seed list (see
+          // FORM_TYPE_OPTIONS) so the manager is never a blank box.
+          const list = stored.length
+            ? stored
+            : Array.isArray(FORM_TYPE_OPTIONS[entity])
+              ? FORM_TYPE_OPTIONS[entity]
+              : [];
+          const update = (index, patch) =>
+            setFormTypeList(entity, list.map((it, i) => (i === index ? { ...it, ...patch } : it)));
+          return (
+            <Box key={entity} sx={{ border: HAIRLINE, borderRadius: "10px", p: 1.5, backgroundColor: "var(--background-primary, #fff)", display: "flex", flexDirection: "column", gap: 1 }}>
+              <Typography sx={{ fontSize: 12, fontWeight: 700 }}>{entityLabel}</Typography>
+              {list.map((item, index) => (
+                <Box key={index} sx={{ display: "flex", gap: 1, alignItems: "flex-end", flexWrap: "wrap" }}>
+                  <Box sx={{ flex: "1 1 180px", minWidth: 130 }}>
+                    <TextField label={t.labelEn} value={optionLabelEn(item)} onChange={(v) => update(index, { label_en: v })} fontStyle={labelFontStyle} />
+                  </Box>
+                  <Box sx={{ flex: "1 1 180px", minWidth: 130 }}>
+                    <TextField label={t.labelCn} value={optionLabelCn(item)} onChange={(v) => update(index, { label_cn: v })} fontStyle={labelFontStyle} />
+                  </Box>
+                  <IconButton title={t.remove} danger onClick={() => setFormTypeList(entity, list.filter((_, i) => i !== index))}>
+                    <Trash2 size={14} strokeWidth={1.6} />
+                  </IconButton>
+                </Box>
+              ))}
+              <Box
+                component="button"
+                type="button"
+                onClick={() => setFormTypeList(entity, [...list, { label_en: "", label_cn: "" }])}
+                sx={{
+                  alignSelf: "flex-start",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "6px",
+                  border: BORDER,
+                  borderRadius: "8px",
+                  backgroundColor: "var(--background-primary, #fff)",
+                  px: 1.5,
+                  py: 0.75,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  "&:hover": { textDecoration: "underline", textUnderlineOffset: "3px" },
+                }}
+              >
+                <Plus size={14} strokeWidth={1.8} /> {t.addType}
+              </Box>
+            </Box>
+          );
+        })}
+      </Section>
+
+      {loading ? (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1, color: "var(--text-primary, rgba(0,0,0,.5))", fontSize: 12 }}>
+          <CircularProgress size={13} sx={{ color: "var(--text-primary, #000)" }} /> loading…
+        </Box>
+      ) : null}
+    </Box>
+  );
+}
