@@ -1,4 +1,4 @@
-import { createComprehensiveArtistContactExport } from "@/components/pages/manager/utils/ArtistContactExportUtils";
+import { createComprehensiveArtistContactExport } from "@/components/pages/manager/utils/artistContactExportUtils";
 import { getSystemLabel, createBasePageText } from "@/components/labels/system_labels";
 import { ArrowUpDown } from 'lucide-react';
 import { sortAlphabetically } from '@/utils/sortUtils';
